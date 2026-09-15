@@ -49,7 +49,7 @@ def fetch_orders():
         if not r.ok:
             raise RuntimeError(f"Zort API error ({r.status_code}): {r.text}")
         data = r.json()
-        batch = data.get("orders") or data.get("data") or []
+        batch = data.get("list") or []
         if not batch:
             break
         orders.extend(batch)
@@ -69,7 +69,7 @@ def main():
         order_date = (o.get("orderdateString") or o.get("createdatetimeString") or "")[:10]
         if not order_date:
             continue
-        for item in o.get("orderproducts") or o.get("OrderProduct") or o.get("orderProducts") or []:
+        for item in o.get("list") or []:
             sku = item.get("sku") or ""
             name = item.get("name") or "ไม่ทราบชื่อสินค้า"
             qty = int(item.get("number") or 0)
