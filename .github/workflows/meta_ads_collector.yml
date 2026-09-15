@@ -1,0 +1,29 @@
+name: She & Normal Meta Ads Collector
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 07:00 น. เวลาไทย (UTC+7) ทุกวัน — โฆษณาควรอัปเดตถี่กว่าคู่แข่ง
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Meta Ads collector
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          INTEL_ADMIN_KEY:   ${{ secrets.INTEL_ADMIN_KEY }}
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+        run: python meta_ads_collector.py
