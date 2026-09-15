@@ -6,12 +6,30 @@ TikTok ด้วย Playwright ดึงยอดผู้ติดตาม/ไ
 RPC (intel_save_channel_snapshot / intel_save_content) ที่มีรหัสหลังบ้านกันไว้ชั้นเดียวกับ
 ที่หน้าเว็บใช้ — ไม่ต้องใช้ database password ตรง ๆ
 """
-import asyncio, os, re, sys
+import asyncio, os, random, re, sys
 import requests
 from playwright.async_api import async_playwright
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
+
+# สคริปต์นี้แค่ "ทำตัวให้ดูเป็นเบราว์เซอร์คนใช้จริง" (ซ่อนสัญญาณอัตโนมัติมาตรฐาน + เลื่อนหน้าจอ/
+# สุ่มดีเลย์แบบคน) เพื่อลดโอกาสถูกเรียก captcha ตั้งแต่แรก — ไม่ได้ไปแก้/ข้าม captcha ใด ๆ
+# ถ้าเจอ captcha จริง สคริปต์จะแค่เก็บข้อมูลคลิปไม่ได้ (เหมือนเดิม) ไม่ได้พยายามฝ่าไป
+STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'languages', { get: () => ['th-TH', 'th', 'en-US', 'en'] });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+window.chrome = window.chrome || { runtime: {} };
+const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
+if (originalQuery) {
+  window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalQuery(parameters)
+  );
+}
+"""
 
 # ========== CONFIG ==========
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://rgfmwmypfgugtxofnydk.supabase.co")
@@ -63,7 +81,7 @@ def call_rpc(fn, payload):
 async def scrape_shop(page, shop):
     print(f"→ {shop['name']} ({shop['url']})")
     await page.goto(shop["url"], wait_until="domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(2500)
+    await page.wait_for_timeout(random.uniform(2000, 3500))
 
     async def text_of(testid):
         el = await page.query_selector(f'[data-e2e="{testid}"]')
@@ -71,6 +89,12 @@ async def scrape_shop(page, shop):
 
     followers = parse_count(await text_of("followers-count"))
     likes = parse_count(await text_of("likes-count"))
+
+    # เลื่อนหน้าจอแบบคน (ทีละนิด ไม่ใช่กระโดดทีเดียว) ก่อนอ่านรายการคลิป —
+    # เผื่อกริดคลิปโหลดแบบ lazy และเพื่อให้พฤติกรรมดูเป็นคนมากขึ้น
+    for _ in range(3):
+        await page.mouse.wheel(0, random.randint(400, 900))
+        await page.wait_for_timeout(random.uniform(400, 900))
 
     videos = await page.eval_on_selector_all(
         'a[href*="/video/"]',
@@ -103,14 +127,23 @@ async def main():
 
     results, errors = [], []
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             viewport={"width": 1280, "height": 900},
+            locale="th-TH",
+            timezone_id="Asia/Bangkok",
+            extra_http_headers={"Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7"},
         )
+        await context.add_init_script(STEALTH_INIT_SCRIPT)
         page = await context.new_page()
 
-        for shop in shops:
+        for i, shop in enumerate(shops):
+            if i > 0:
+                await page.wait_for_timeout(random.uniform(1500, 4000))  # เว้นจังหวะระหว่างร้าน ไม่รัวติดกัน
             try:
                 data = await scrape_shop(page, shop)
                 call_rpc("intel_save_channel_snapshot", {
