@@ -6,7 +6,8 @@ TikTok ด้วย Playwright ดึงยอดผู้ติดตาม/ไ
 RPC (intel_save_channel_snapshot / intel_save_content) ที่มีรหัสหลังบ้านกันไว้ชั้นเดียวกับ
 ที่หน้าเว็บใช้ — ไม่ต้องใช้ database password ตรง ๆ
 """
-import asyncio, os, random, re, sys
+import asyncio, json, os, random, re, sys
+from datetime import datetime, timezone
 import requests
 from playwright.async_api import async_playwright
 
@@ -119,6 +120,45 @@ async def scrape_shop(page, shop):
     return {"followers": followers, "likes": likes, "videos": video_rows}
 
 
+async def scrape_video_detail(page, video_url):
+    """เปิดหน้าคลิปแต่ละตัวเพื่อดึง เพลง/แฮชแท็ก/ความยาว/วันที่โพสต์จริง จาก JSON ที่ TikTok
+    ฝังมากับหน้าเอง (#__UNIVERSAL_DATA_FOR_REHYDRATION__) — ถ้าโหลดไม่ได้หรือโดน captcha
+    แค่คืนค่าว่าง ไม่ทำให้ทั้งรอบล้ม"""
+    try:
+        await page.goto(video_url, wait_until="domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(random.uniform(900, 1800))
+        raw = await page.eval_on_selector(
+            "#__UNIVERSAL_DATA_FOR_REHYDRATION__", "el => el.textContent"
+        )
+        if not raw:
+            return {}
+        data = json.loads(raw)
+        item = (
+            data.get("__DEFAULT_SCOPE__", {})
+            .get("webapp.video-detail", {})
+            .get("itemInfo", {})
+            .get("itemStruct", {})
+        )
+        if not item:
+            return {}
+        hashtags = [t.get("hashtagName") for t in (item.get("textExtra") or []) if t.get("hashtagName")]
+        create_time = item.get("createTime")
+        posted_at = None
+        if create_time:
+            try:
+                posted_at = datetime.fromtimestamp(int(create_time), tz=timezone.utc).isoformat()
+            except (ValueError, TypeError):
+                posted_at = None
+        return {
+            "hashtags": hashtags or None,
+            "music_title": (item.get("music") or {}).get("title") or None,
+            "duration_seconds": (item.get("video") or {}).get("duration") or None,
+            "posted_at": posted_at,
+        }
+    except Exception:
+        return {}
+
+
 async def main():
     shops = get_competitors()
     if not shops:
@@ -151,9 +191,13 @@ async def main():
                     "p_followers": data["followers"], "p_extra": {"likes": data["likes"], "source": "tiktok_collector"},
                 })
                 for v in data["videos"]:
+                    detail = await scrape_video_detail(page, v["url"])
+                    await page.wait_for_timeout(random.uniform(800, 1600))
                     call_rpc("intel_save_content", {
                         "k": ADMIN_KEY, "p_competitor_id": shop["id"], "p_channel": "tiktok",
                         "p_external_id": v["external_id"], "p_url": v["url"], "p_views": v["views"],
+                        "p_posted_at": detail.get("posted_at"), "p_hashtags": detail.get("hashtags"),
+                        "p_music_title": detail.get("music_title"), "p_duration_seconds": detail.get("duration_seconds"),
                     })
                 print(f"  ✅ เก็บสำเร็จ: followers={data['followers']} คลิป={len(data['videos'])}")
                 results.append(f"{shop['name']}: {data['followers']:,} followers" if data["followers"] else f"{shop['name']}: -")
