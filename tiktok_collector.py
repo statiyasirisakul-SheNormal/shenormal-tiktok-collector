@@ -34,14 +34,24 @@ if (originalQuery) {
 
 # ========== CONFIG ==========
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://rgfmwmypfgugtxofnydk.supabase.co")
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]   # anon/publishable key เอง ไม่ใช่ secret จริง
-ADMIN_KEY = os.environ["INTEL_ADMIN_KEY"]              # รหัสหลังบ้าน — ต้องมาจาก GitHub Secret เท่านั้น
 MAX_VIDEOS_PER_SHOP = 8
 LINE_TOKEN = os.environ.get("LINE_TOKEN")               # ถ้าไม่ตั้งจะข้ามการแจ้งเตือน LINE
 LINE_TARGETS = [t for t in os.environ.get("LINE_TARGETS", "").split(",") if t]
 # ============================
 
-HEADERS = {"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}", "Content-Type": "application/json"}
+# สิทธิ์เขียน: ใช้ Supabase secret key (service_role) — ตั้งแต่ 15 ก.ย. 69 หลังบ้านเปลี่ยนไปเช็กผู้ใช้ที่ล็อกอิน
+# รหัสหลังบ้าน (INTEL_ADMIN_KEY) ใช้เขียนไม่ได้แล้ว ตัวเก็บข้อมูลจึงต้องใช้ key นี้แทน — ห้ามฝังในโค้ด ต้องมาจาก GitHub Secret
+# อ่านจาก SUPABASE_SERVICE_KEY ก่อน ถ้าไม่มีใช้ secret ชื่อเดิม INTEL_ADMIN_KEY (ให้ใส่ secret key ของ Supabase แทนรหัสหลังบ้าน —
+# ไฟล์ workflow จะได้ไม่ต้องแก้)
+SUPABASE_SERVICE_KEY = (os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("INTEL_ADMIN_KEY") or "").strip()
+if not SUPABASE_SERVICE_KEY.startswith(("sb_secret_", "eyJ")):
+    sys.exit("❌ GitHub Secret INTEL_ADMIN_KEY ต้องเป็น Supabase secret key (ขึ้นต้น sb_secret_) — "
+             "เอามาจาก Supabase › Project Settings › API Keys › Secret keys (รหัสหลังบ้านเดิมใช้เขียนข้อมูลไม่ได้แล้ว)")
+ADMIN_KEY = ""  # ฟังก์ชันใน DB ยังรับพารามิเตอร์ k อยู่ แต่ไม่ได้ใช้ตรวจแล้ว
+# key แบบใหม่ (sb_secret_...) ไม่ใช่ JWT → ส่งแค่ apikey; key แบบเก่า (JWT) ส่ง Authorization ด้วย
+HEADERS = {"apikey": SUPABASE_SERVICE_KEY, "Content-Type": "application/json"}
+if not SUPABASE_SERVICE_KEY.startswith("sb_"):
+    HEADERS["Authorization"] = f"Bearer {SUPABASE_SERVICE_KEY}"
 
 
 def parse_count(text):

@@ -20,8 +20,10 @@ Supabase (project `rgfmwmypfgugtxofnydk`, schema `intel`)
 
 | Secret | ค่า | จำเป็น |
 |---|---|---|
-| `SUPABASE_ANON_KEY` | anon/publishable key ของโปรเจกต์ (Supabase → Project Settings → API) | ใช่ |
-| `INTEL_ADMIN_KEY` | รหัสหลังบ้านของ dashboard (อันเดียวกับที่ใช้กดบันทึกที่หน้าเว็บ) | ใช่ |
+| `INTEL_ADMIN_KEY` | **Secret key ของ Supabase** (ขึ้นต้น `sb_secret_`, Project Settings → API Keys → Secret keys) — ชื่อ secret เดิมแต่ค่าไม่ใช่รหัสหลังบ้านแล้ว · ใช้ร่วมกันทุกตัวเก็บ | ใช่ |
+
+> ตั้งแต่ 15 ก.ย. 69 หลังบ้านเปลี่ยนไปตรวจสิทธิ์จากผู้ใช้ที่ล็อกอิน รหัสหลังบ้าน (`INTEL_ADMIN_KEY`) จึงใช้เขียนข้อมูลไม่ได้แล้ว
+> ตัวเก็บข้อมูลต้องใช้ secret key แทน — ใส่ลงใน secret ชื่อเดิม `INTEL_ADMIN_KEY` (ไฟล์ workflow ไม่ต้องแก้) · `SUPABASE_ANON_KEY` ไม่ได้ใช้แล้ว
 | `LINE_TOKEN` | LINE Messaging API channel access token | ไม่ (ถ้าอยากได้สรุปเข้า LINE) |
 | `LINE_TARGETS` | user/group id คั่นด้วย comma เช่น `U123,C456` | ไม่ |
 
@@ -32,7 +34,7 @@ Supabase (project `rgfmwmypfgugtxofnydk`, schema `intel`)
   ```bash
   pip install -r requirements.txt
   playwright install chromium
-  SUPABASE_ANON_KEY=... INTEL_ADMIN_KEY=... python tiktok_collector.py
+  INTEL_ADMIN_KEY=sb_secret_... python tiktok_collector.py
   ```
 
 ## ตารางเวลา

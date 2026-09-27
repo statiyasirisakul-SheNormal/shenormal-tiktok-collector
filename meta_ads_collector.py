@@ -6,8 +6,7 @@
 
 ต้องมี env vars:
   META_ACCESS_TOKEN   — token ของ System User (สิทธิ์ ads_read) — เป็นความลับ ห้ามฝังในโค้ด
-  SUPABASE_ANON_KEY
-  INTEL_ADMIN_KEY
+  INTEL_ADMIN_KEY — ใส่ Supabase secret key (sb_secret_...) — เป็นความลับ
 """
 import os, sys, requests
 from datetime import date, timedelta
@@ -16,10 +15,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://rgfmwmypfgugtxofnydk.supabase.co")
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
-ADMIN_KEY = os.environ["INTEL_ADMIN_KEY"]
 META_ACCESS_TOKEN = os.environ["META_ACCESS_TOKEN"]
-GRAPH_VERSION = "v21.0"
+GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v23.0")
 LOOKBACK_DAYS = int(os.environ.get("ADS_LOOKBACK_DAYS", "14"))  # ย้อนหลังกี่วัน (เผื่อ Meta รายงานตัวเลขช้า)
 
 # ad account id ต่อแบรนด์ — เก็บไว้ในโค้ดได้ เพราะเป็นแค่ตัวระบุบัญชี ไม่ใช่ความลับ
@@ -28,7 +25,19 @@ AD_ACCOUNTS = {
     "normal": "327519824556564",
 }
 
-HEADERS = {"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}", "Content-Type": "application/json"}
+# สิทธิ์เขียน: ใช้ Supabase secret key (service_role) — ตั้งแต่ 15 ก.ย. 69 หลังบ้านเปลี่ยนไปเช็กผู้ใช้ที่ล็อกอิน
+# รหัสหลังบ้าน (INTEL_ADMIN_KEY) ใช้เขียนไม่ได้แล้ว ตัวเก็บข้อมูลจึงต้องใช้ key นี้แทน — ห้ามฝังในโค้ด ต้องมาจาก GitHub Secret
+# อ่านจาก SUPABASE_SERVICE_KEY ก่อน ถ้าไม่มีใช้ secret ชื่อเดิม INTEL_ADMIN_KEY (ให้ใส่ secret key ของ Supabase แทนรหัสหลังบ้าน —
+# ไฟล์ workflow จะได้ไม่ต้องแก้)
+SUPABASE_SERVICE_KEY = (os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("INTEL_ADMIN_KEY") or "").strip()
+if not SUPABASE_SERVICE_KEY.startswith(("sb_secret_", "eyJ")):
+    sys.exit("❌ GitHub Secret INTEL_ADMIN_KEY ต้องเป็น Supabase secret key (ขึ้นต้น sb_secret_) — "
+             "เอามาจาก Supabase › Project Settings › API Keys › Secret keys (รหัสหลังบ้านเดิมใช้เขียนข้อมูลไม่ได้แล้ว)")
+ADMIN_KEY = ""  # ฟังก์ชันใน DB ยังรับพารามิเตอร์ k อยู่ แต่ไม่ได้ใช้ตรวจแล้ว
+# key แบบใหม่ (sb_secret_...) ไม่ใช่ JWT → ส่งแค่ apikey; key แบบเก่า (JWT) ส่ง Authorization ด้วย
+HEADERS = {"apikey": SUPABASE_SERVICE_KEY, "Content-Type": "application/json"}
+if not SUPABASE_SERVICE_KEY.startswith("sb_"):
+    HEADERS["Authorization"] = f"Bearer {SUPABASE_SERVICE_KEY}"
 
 
 def call_rpc(fn, payload):
@@ -58,7 +67,7 @@ def fetch_account_daily(ad_account_id, since, until):
 def fetch_ad_level_daily(ad_account_id, since, until):
     """คืนรายวันของแต่ละโฆษณา (ad_id) — ใช้สรุปยอดสะสมต่อ ad และรายวันแยกต่อ ad"""
     data = graph_get(f"act_{ad_account_id}/insights", {
-        "fields": "ad_id,ad_name,campaign_id,campaign_name,adset_name,spend,impressions,clicks,reach,ctr,cpc,actions",
+        "fields": "ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,objective,spend,impressions,clicks,reach,ctr,cpc,actions",
         "time_range": f'{{"since":"{since}","until":"{until}"}}',
         "time_increment": 1,
         "level": "ad",
@@ -84,6 +93,17 @@ def count_results(actions):
         return None
     interesting = {"purchase", "offsite_conversion.fb_pixel_purchase", "lead", "onsite_conversion.purchase"}
     total = sum(int(float(a.get("value", 0))) for a in actions if a.get("action_type") in interesting)
+    return total or None
+
+
+MESSAGE_ACTIONS = {"onsite_conversion.messaging_conversation_started_7d"}
+
+
+def count_messages(actions):
+    """จำนวนแชตที่เริ่มคุย (Messenger/IG/WhatsApp) — แคมเปญทักแชตวัดผลด้วยตัวนี้"""
+    if not actions:
+        return None
+    total = sum(int(float(a.get("value", 0))) for a in actions if a.get("action_type") in MESSAGE_ACTIONS)
     return total or None
 
 
@@ -138,7 +158,8 @@ def main():
                     continue
                 seen_ads[ad_id] = {
                     "campaign_id": row.get("campaign_id"), "campaign_name": row.get("campaign_name"),
-                    "adset_name": row.get("adset_name"), "ad_name": row.get("ad_name"),
+                    "adset_id": row.get("adset_id"), "adset_name": row.get("adset_name"), "ad_name": row.get("ad_name"),
+                    "objective": row.get("objective"),
                 }
 
             # ดึงครีเอทีฟ+สถานะของแต่ละโฆษณา (ครั้งเดียวต่อ ad ไม่ใช่ต่อวัน)
@@ -152,6 +173,7 @@ def main():
                     "p_thumbnail_url": creative.get("thumbnail_url"),
                     "p_title": creative.get("title"), "p_body": creative.get("body"),
                     "p_status": status,
+                    "p_objective": meta["objective"], "p_adset_id": meta["adset_id"],
                 })
 
             for row in ad_rows:
@@ -170,6 +192,7 @@ def main():
                     "p_ctr": float(row["ctr"]) if row.get("ctr") else None,
                     "p_cpc": float(row["cpc"]) if row.get("cpc") else None,
                     "p_results": results_count, "p_cost_per_result": cost_per_result,
+                    "p_messages": count_messages(row.get("actions")),
                 })
             print(f"✅ {brand}: {len(seen_ads)} โฆษณา, {len(ad_rows)} แถวรายวัน")
             results.append(f"{brand}: {len(seen_ads)} ads")
