@@ -67,7 +67,7 @@ def fetch_account_daily(ad_account_id, since, until):
 def fetch_ad_level_daily(ad_account_id, since, until):
     """คืนรายวันของแต่ละโฆษณา (ad_id) — ใช้สรุปยอดสะสมต่อ ad และรายวันแยกต่อ ad"""
     data = graph_get(f"act_{ad_account_id}/insights", {
-        "fields": "ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,objective,spend,impressions,clicks,reach,ctr,cpc,actions",
+        "fields": "ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,objective,spend,impressions,clicks,reach,ctr,cpc,actions,video_thruplay_watched_actions,video_p100_watched_actions",
         "time_range": f'{{"since":"{since}","until":"{until}"}}',
         "time_increment": 1,
         "level": "ad",
@@ -104,6 +104,14 @@ def count_messages(actions):
     if not actions:
         return None
     total = sum(int(float(a.get("value", 0))) for a in actions if a.get("action_type") in MESSAGE_ACTIONS)
+    return total or None
+
+
+def action_sum(actions, types):
+    """รวมค่าใน list แบบ [{action_type, value}] เฉพาะประเภทที่ต้องการ"""
+    if not actions:
+        return None
+    total = sum(int(float(a.get("value", 0))) for a in actions if a.get("action_type") in types)
     return total or None
 
 
@@ -193,6 +201,12 @@ def main():
                     "p_cpc": float(row["cpc"]) if row.get("cpc") else None,
                     "p_results": results_count, "p_cost_per_result": cost_per_result,
                     "p_messages": count_messages(row.get("actions")),
+                    # วิดีโอ/การมีส่วนร่วม — ใช้คำนวณ CPV, อัตราดูจบ, Engagement rate, Conversion rate
+                    "p_video_views": action_sum(row.get("actions"), {"video_view"}),
+                    "p_thruplays": action_sum(row.get("video_thruplay_watched_actions"), {"video_view"}),
+                    "p_video_p100": action_sum(row.get("video_p100_watched_actions"), {"video_view"}),
+                    "p_engagements": action_sum(row.get("actions"), {"post_engagement"}),
+                    "p_link_clicks": action_sum(row.get("actions"), {"link_click"}),
                 })
             print(f"✅ {brand}: {len(seen_ads)} โฆษณา, {len(ad_rows)} แถวรายวัน")
             results.append(f"{brand}: {len(seen_ads)} ads")
