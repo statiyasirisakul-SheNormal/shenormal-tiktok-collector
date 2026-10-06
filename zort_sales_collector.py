@@ -8,7 +8,7 @@
   ZORT_STORENAME, ZORT_APIKEY, ZORT_APISECRET  — จาก Zort (ความลับ ห้ามฝังในโค้ด)
   INTEL_ADMIN_KEY — ใส่ Supabase secret key (sb_secret_...) — เป็นความลับ
 """
-import os, re, sys, requests
+import os, re, sys, time, requests
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -40,6 +40,23 @@ if not SUPABASE_SERVICE_KEY.startswith("sb_"):
 ZORT_HEADERS = {"storename": ZORT_STORENAME, "apikey": ZORT_APIKEY, "apisecret": ZORT_APISECRET}
 
 
+def zort_get(url, params, timeout=90, tries=4):
+    """Zort ตอบช้า/หลุดเป็นบางครั้ง (5 ต.ค. 69 timeout ครั้งเดียวแล้วทั้งรอบพัง) → ลองใหม่ รอ 15/30/60 วินาที"""
+    for i in range(tries):
+        try:
+            r = requests.get(url, headers=ZORT_HEADERS, params=params, timeout=timeout)
+            if r.status_code < 500 and r.status_code != 429:
+                return r
+            err = f"HTTP {r.status_code}"
+        except (requests.Timeout, requests.ConnectionError) as e:
+            err = type(e).__name__
+        if i == tries - 1:
+            raise RuntimeError(f"Zort ไม่ตอบหลังลอง {tries} ครั้ง ({err}): {url}")
+        wait = 15 * 2 ** i
+        print(f"⚠️ Zort {err} — ลองใหม่ใน {wait} วินาที ({i + 1}/{tries - 1})")
+        time.sleep(wait)
+
+
 def call_rpc(fn, payload):
     r = requests.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn}", headers=HEADERS, json=payload)
     if not r.ok:
@@ -51,11 +68,9 @@ def fetch_orders():
     until = date.today().isoformat()
     orders, page = [], 1
     while True:
-        r = requests.get(
+        r = zort_get(
             "https://open-api.zortout.com/v4/Order/GetOrders",
-            headers=ZORT_HEADERS,
-            params={"orderdateafter": since, "orderdatebefore": until, "limit": 500, "page": page},
-            timeout=30,
+            {"orderdateafter": since, "orderdatebefore": until, "limit": 500, "page": page},
         )
         if not r.ok:
             raise RuntimeError(f"Zort API error ({r.status_code}): {r.text}")
@@ -92,8 +107,7 @@ def fetch_costs():
     """ราคาทุนต่อ SKU จาก Product/GetProducts (purchaseprice)"""
     costs, page = {}, 1
     while True:
-        r = requests.get("https://open-api.zortout.com/v4/Product/GetProducts", headers=ZORT_HEADERS,
-                         params={"limit": 500, "page": page}, timeout=60)
+        r = zort_get("https://open-api.zortout.com/v4/Product/GetProducts", {"limit": 500, "page": page})
         if not r.ok:
             raise RuntimeError(f"Zort GetProducts error ({r.status_code}): {r.text[:200]}")
         batch = r.json().get("list") or []
