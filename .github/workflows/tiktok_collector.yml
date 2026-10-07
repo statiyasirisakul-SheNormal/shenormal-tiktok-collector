@@ -1,8 +1,9 @@
 name: She & Normal TikTok Collector
 
+# ปิดรอบอัตโนมัติแล้ว (7/10/69): TikTok บล็อกการเปิดหน้าโปรไฟล์ → ได้แค่ยอดผู้ติดตาม ไม่ได้คลิปใหม่
+# ระบบใหม่ = Supabase Edge Function competitor-sync (Apify ทุก 2 วัน) อยู่ใน repo she-normal-dashboard
+# เก็บไฟล์นี้ไว้กดรันเองได้ถ้าจำเป็น
 on:
-  schedule:
-    - cron: '0 23 * * 0'   # 06:00 น. เวลาไทย (UTC+7) ทุกวันอาทิตย์ — ตรงกับที่ตั้งไว้ในหลังบ้าน
   workflow_dispatch:
 
 jobs:
