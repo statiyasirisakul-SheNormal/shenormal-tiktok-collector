@@ -131,7 +131,8 @@ def channel_rows(orders, costs):
         if not d or status in SKIP_STATUS:
             continue
         a = agg[(d, norm_channel(o))]
-        net = float(o.get("amount") or 0) + float(o.get("voucheramount") or 0)
+        # amount ของ Zort รวมส่วนลดที่แพลตฟอร์มออกให้ (voucheramount) ไว้แล้ว — เดิมบวกซ้ำ ยอดเกินจริง (แก้ 14/10/69)
+        net = float(o.get("amount") or 0)
         if status in RETURN_STATUS:
             a["returned_orders"] += 1
             a["returned_amount"] += net
