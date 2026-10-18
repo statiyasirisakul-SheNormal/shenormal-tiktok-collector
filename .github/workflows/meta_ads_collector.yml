@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *'   # 07:00 น. เวลาไทย (UTC+7) ทุกวัน
   workflow_dispatch:
+    inputs:
+      since:
+        description: 'ดึงย้อนหลังตั้งแต่วันที่ (YYYY-MM-DD) เว้นว่าง = 14 วันล่าสุด'
+        required: false
+        default: ''
 
 jobs:
   collect:
@@ -26,4 +31,5 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           INTEL_ADMIN_KEY:   ${{ secrets.INTEL_ADMIN_KEY }}
           META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          ADS_SINCE:         ${{ github.event.inputs.since }}
         run: python meta_ads_collector.py

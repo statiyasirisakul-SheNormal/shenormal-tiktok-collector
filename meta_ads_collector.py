@@ -17,7 +17,9 @@ if hasattr(sys.stdout, "reconfigure"):
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://rgfmwmypfgugtxofnydk.supabase.co")
 META_ACCESS_TOKEN = os.environ["META_ACCESS_TOKEN"]
 GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v23.0")
-LOOKBACK_DAYS = int(os.environ.get("ADS_LOOKBACK_DAYS", "14"))  # ย้อนหลังกี่วัน (เผื่อ Meta รายงานตัวเลขช้า)
+LOOKBACK_DAYS = int(os.environ.get("ADS_LOOKBACK_DAYS") or "14")  # ย้อนหลังกี่วัน (เผื่อ Meta รายงานตัวเลขช้า)
+ADS_SINCE = (os.environ.get("ADS_SINCE") or "").strip()  # ดึงย้อนหลังตั้งแต่วันที่ (YYYY-MM-DD) — ใช้ตอนดึงประวัติครั้งแรก · Meta เก็บย้อนหลังได้ราว 37 เดือน
+CHUNK_DAYS = 30  # ช่วงยาวแบ่งดึงทีละ 30 วัน (คำขอเดียวช่วงยาวเกิน Meta ตอบช้า/ตัดหน้า)
 
 # ad account id ต่อแบรนด์ — เก็บไว้ในโค้ดได้ เพราะเป็นแค่ตัวระบุบัญชี ไม่ใช่ความลับ
 AD_ACCOUNTS = {
@@ -54,14 +56,28 @@ def graph_get(path, params):
     return r.json()
 
 
+def follow_pages(data):
+    rows = data.get("data", [])
+    next_url = data.get("paging", {}).get("next")
+    while next_url:
+        r = requests.get(next_url, timeout=30)
+        if not r.ok:
+            raise RuntimeError(f"paging {r.status_code}: {r.text[:200]}")
+        page = r.json()
+        rows.extend(page.get("data", []))
+        next_url = page.get("paging", {}).get("next")
+    return rows
+
+
 def fetch_account_daily(ad_account_id, since, until):
-    data = graph_get(f"act_{ad_account_id}/insights", {
+    # หน้าละ 25 วันโดยค่าเริ่มต้น → ต้องตาม paging ไม่งั้นช่วงยาวได้แค่ 25 วันแรก
+    return follow_pages(graph_get(f"act_{ad_account_id}/insights", {
         "fields": "spend,impressions,clicks,reach,ctr,cpc",
         "time_range": f'{{"since":"{since}","until":"{until}"}}',
         "time_increment": 1,
         "level": "account",
-    })
-    return data.get("data", [])
+        "limit": 100,
+    }))
 
 
 def fetch_ad_level_daily(ad_account_id, since, until):
@@ -73,18 +89,7 @@ def fetch_ad_level_daily(ad_account_id, since, until):
         "level": "ad",
         "limit": 200,
     })
-    rows = data.get("data", [])
-    # ตาม paging.next ถ้ามี (เผื่อโฆษณาเยอะ)
-    paging = data.get("paging", {})
-    next_url = paging.get("next")
-    while next_url:
-        r = requests.get(next_url, timeout=30)
-        if not r.ok:
-            break
-        page = r.json()
-        rows.extend(page.get("data", []))
-        next_url = page.get("paging", {}).get("next")
-    return rows
+    return follow_pages(data)
 
 
 def count_results(actions):
@@ -136,9 +141,26 @@ def fetch_ad_status(ad_id):
         return None
 
 
+def windows(since, until):
+    d0, end = date.fromisoformat(since), date.fromisoformat(until)
+    while d0 <= end:
+        d1 = min(d0 + timedelta(days=CHUNK_DAYS - 1), end)
+        yield d0.isoformat(), d1.isoformat()
+        d0 = d1 + timedelta(days=1)
+
+
 def main():
-    since = (date.today() - timedelta(days=LOOKBACK_DAYS)).isoformat()
+    since = ADS_SINCE or (date.today() - timedelta(days=LOOKBACK_DAYS)).isoformat()
     until = date.today().isoformat()
+    print(f"ช่วงที่ดึง {since} → {until}")
+    ok = False
+    for w0, w1 in windows(since, until):
+        ok = run_range(w0, w1) or ok
+    if not ok:
+        sys.exit(1)
+
+
+def run_range(since, until):
     results, errors = [], []
 
     for brand, acct_id in AD_ACCOUNTS.items():
@@ -155,7 +177,7 @@ def main():
                     "p_ctr": float(row["ctr"]) if row.get("ctr") else None,
                     "p_cpc": float(row["cpc"]) if row.get("cpc") else None,
                 })
-            print(f"✅ {brand}: บัญชีรวม {len(acct_rows)} วัน")
+            print(f"✅ {brand} {since}→{until}: บัญชีรวม {len(acct_rows)} วัน · ใช้ไป {sum(float(r.get('spend') or 0) for r in acct_rows):,.0f}")
 
             # 2) ระดับโฆษณาแต่ละตัว
             ad_rows = fetch_ad_level_daily(acct_id, since, until)
@@ -214,8 +236,7 @@ def main():
             print(f"❌ {brand}: เก็บไม่สำเร็จ — {e}")
             errors.append(f"{brand}: {e}")
 
-    if errors and not results:
-        sys.exit(1)
+    return bool(results) or not errors
 
 
 if __name__ == "__main__":
