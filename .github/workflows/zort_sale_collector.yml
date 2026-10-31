@@ -1,8 +1,8 @@
 name: She & Normal Zort Sales Collector
 
+# ปิดรอบอัตโนมัติ 31/10/69 — ย้ายไป Edge Function `zort` ใน Supabase (ดึงทุกชั่วโมง คีย์กรอกในหลังบ้าน Dashboard)
+# เหลือปุ่มกดรันเองไว้เป็นทางสำรอง
 on:
-  schedule:
-    - cron: '30 0 * * *'   # 07:30 น. เวลาไทย (UTC+7) ทุกวัน
   workflow_dispatch:
 
 jobs:
